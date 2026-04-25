@@ -1,321 +1,455 @@
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lampton Teacher Appreciation Sign-up</title>
+```react
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { Heart, Coffee, Utensils, Cookie, GlassWater, Trash2, Lock, Unlock, User, ShoppingBag, Plus, Info, CheckCircle2, AlertCircle, Apple } from 'lucide-react';
 
-    <!-- Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-HX3QW1SMSF"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-HX3QW1SMSF');
-    </script>
+// --- Firebase Configuration ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'lampton-appreciation-v2';
 
-    <!-- Tailwind & React Resources -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+const MAX_QUANTITY = 4;
 
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; overflow-x: hidden; }
-        .clip-pennant { clip-path: polygon(0% 0%, 100% 0%, 50% 100%); }
-        /* Hide root until React loads to prevent flicker */
-        #root:empty { display: none; }
-        .admin-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); }
-    </style>
-</head>
-<body class="bg-[#f8fafc]">
-    <div id="root"></div>
+const DAYS = [
+  { 
+    id: 'monday', 
+    name: 'Monday', 
+    theme: 'Coffee & Breakfast', 
+    items: ['Coffee', 'Bagels', 'Juice', 'Cream Cheese Tubs'],
+    color: 'bg-red-500',
+    lightColor: 'bg-red-50',
+    borderColor: 'border-red-200',
+    textColor: 'text-red-700',
+    icon: <Coffee className="w-6 h-6" />,
+    allowSignup: true
+  },
+  { 
+    id: 'tuesday', 
+    name: 'Tuesday', 
+    theme: 'Fresh & Fancy', 
+    items: ['Fruit Platters', 'Charcuterie Board'],
+    color: 'bg-purple-600',
+    lightColor: 'bg-purple-50',
+    borderColor: 'border-purple-200',
+    textColor: 'text-purple-700',
+    icon: <Utensils className="w-6 h-6" />,
+    allowSignup: true
+  },
+  { 
+    id: 'wednesday', 
+    name: 'Wednesday', 
+    theme: 'PTA Provided Lunch', 
+    items: ['PTA will provide lunch'],
+    color: 'bg-sky-500',
+    lightColor: 'bg-sky-50',
+    borderColor: 'border-sky-200',
+    textColor: 'text-sky-700',
+    icon: <span className="text-xl">🌮</span>,
+    allowSignup: false 
+  },
+  { 
+    id: 'thursday', 
+    name: 'Thursday', 
+    theme: 'Sweet Treats', 
+    items: ['Cookies', 'Muffins'],
+    color: 'bg-green-500',
+    lightColor: 'bg-green-50',
+    borderColor: 'border-green-200',
+    textColor: 'text-green-700',
+    icon: <Cookie className="w-6 h-6" />,
+    allowSignup: true
+  },
+  { 
+    id: 'friday', 
+    name: 'Friday', 
+    theme: 'Thirst Quencher', 
+    items: ['Lemonade'],
+    color: 'bg-orange-500',
+    lightColor: 'bg-orange-50',
+    borderColor: 'border-orange-200',
+    textColor: 'text-orange-700',
+    icon: <GlassWater className="w-6 h-6" />,
+    allowSignup: true
+  }
+];
 
-    <!-- Firebase SDK Setup -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [signups, setSignups] = useState([]);
+  const [formData, setFormData] = useState({ name: '', item: '', dayId: 'monday' });
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPass, setAdminPass] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
-        // Your specific Firebase configuration
-        const firebaseConfig = {
-            apiKey: "AIzaSyD_nLssSVEfRL-x1KM1574KHBIcnhdS4Ck",
-            authDomain: "lampton-appreciation.firebaseapp.com",
-            projectId: "lampton-appreciation",
-            storageBucket: "lampton-appreciation.firebasestorage.app",
-            messagingSenderId: "721268982987",
-            appId: "1:721268982987:web:5d8b978e6f3dc69e7b91ce",
-            measurementId: "G-HX3QW1SMSF"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        window.fbAuth = getAuth(app);
-        window.fbDb = getFirestore(app);
-        window.fbMethods = { collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp, signInAnonymously, onAuthStateChanged };
-    </script>
-
-    <!-- The App Logic -->
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        const MAX_SLOTS = 4;
-        const DAYS = [
-            { id: 'monday', name: 'Monday', theme: 'Coffee & Breakfast', items: ['Coffee', 'Bagels', 'Juice', 'Cream Cheese Tubs'], color: 'bg-red-500', textColor: 'text-red-700', allow: true, emoji: '☕' },
-            { id: 'tuesday', name: 'Tuesday', theme: 'Fresh & Fancy', items: ['Fruit Platters', 'Charcuterie Board'], color: 'bg-purple-600', textColor: 'text-purple-700', allow: true, emoji: '🥗' },
-            { id: 'wednesday', name: 'Wednesday', theme: 'PTA Provided Lunch', items: ['PTA will provide lunch'], color: 'bg-sky-500', textColor: 'text-sky-700', allow: false, emoji: '🌮' },
-            { id: 'thursday', name: 'Thursday', theme: 'Sweet Treats', items: ['Cookies', 'Muffins'], color: 'bg-green-500', textColor: 'text-green-700', allow: true, emoji: '🍪' },
-            { id: 'friday', name: 'Friday', theme: 'Thirst Quencher', items: ['Lemonade'], color: 'bg-orange-500', textColor: 'text-orange-700', allow: true, emoji: '🍋' }
-        ];
-
-        function App() {
-            const [user, setUser] = useState(null);
-            const [signups, setSignups] = useState([]);
-            const [formData, setFormData] = useState({ name: '', item: '', dayId: 'monday' });
-            const [isAdmin, setIsAdmin] = useState(false);
-            const [adminInput, setAdminInput] = useState('');
-            const [showAdmin, setShowAdmin] = useState(false);
-            const [error, setError] = useState('');
-            const [isDeleting, setIsDeleting] = useState(null);
-
-            useEffect(() => {
-                const checkFB = setInterval(() => {
-                    if (window.fbMethods) {
-                        clearInterval(checkFB);
-                        window.fbMethods.signInAnonymously(window.fbAuth).catch(console.error);
-                        window.fbMethods.onAuthStateChanged(window.fbAuth, setUser);
-                    }
-                }, 100);
-            }, []);
-
-            useEffect(() => {
-                if (!user) return;
-                const q = window.fbMethods.collection(window.fbDb, 'signups');
-                return window.fbMethods.onSnapshot(q, (snapshot) => {
-                    const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-                    // Sort by timestamp if available
-                    setSignups(data.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)));
-                });
-            }, [user]);
-
-            const handleSignup = async (e) => {
-                e.preventDefault();
-                if (!formData.name || !formData.item) return setError("Please fill in all fields.");
-                
-                const currentCount = getItemCount(formData.dayId, formData.item);
-                if (currentCount >= MAX_SLOTS) return setError("This slot is already full!");
-
-                try {
-                    await window.fbMethods.addDoc(window.fbMethods.collection(window.fbDb, 'signups'), {
-                        ...formData,
-                        timestamp: window.fbMethods.serverTimestamp(),
-                        uid: user.uid
-                    });
-                    setFormData({...formData, item: ''});
-                    setError('');
-                } catch (err) { 
-                    setError("Save failed. Make sure Firestore Rules are set to 'true'."); 
-                }
-            };
-
-            const handleDelete = async (id) => {
-                if (!isAdmin) return;
-                setIsDeleting(id);
-                try {
-                    await window.fbMethods.deleteDoc(window.fbMethods.doc(window.fbDb, 'signups', id));
-                } catch (err) {
-                    console.error("Delete failed:", err);
-                } finally {
-                    setIsDeleting(null);
-                }
-            };
-
-            const getItemCount = (dayId, item) => signups.filter(s => s.dayId === dayId && s.item === item).length;
-            const selectedDay = DAYS.find(d => d.id === formData.dayId);
-
-            return (
-                <div className="pb-24">
-                    {/* Pennant Header */}
-                    <header className="bg-white border-b-4 border-blue-600 relative pt-12 pb-10 px-4 text-center shadow-md">
-                        <div className="absolute top-0 left-0 right-0 flex justify-center -space-x-1">
-                            {[...Array(20)].map((_, i) => (
-                                <div key={i} className={`w-10 h-12 ${i % 2 === 0 ? 'bg-blue-600' : 'bg-yellow-400'} clip-pennant`}></div>
-                            ))}
-                        </div>
-                        <h1 className="text-4xl md:text-7xl font-[1000] tracking-tighter uppercase leading-none text-slate-800">
-                          Teacher & Staff <br/>
-                          <span className="text-blue-700 font-black">Appreciation</span>
-                        </h1>
-                        <div className="inline-block bg-yellow-400 px-6 py-2 rounded-full font-black text-xl md:text-3xl text-blue-900 transform -rotate-1 shadow-lg border-2 border-blue-900 mt-4 uppercase">MAY 4-8, 2026</div>
-                        <p className="mt-6 font-bold text-slate-500 italic">Lampton Elementary • Shared Sign-up Sheet</p>
-                    </header>
-
-                    <main className="max-w-4xl mx-auto px-4 mt-8 space-y-8">
-                        {/* Signup Form */}
-                        <section className="bg-white rounded-[2rem] shadow-xl p-6 md:p-10 border-2 border-slate-100">
-                            <h3 className="text-2xl font-black mb-6 flex items-center gap-2">
-                                <span className="text-blue-600 text-3xl">➕</span> Add My Item
-                            </h3>
-                            <form onSubmit={handleSignup} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="flex flex-col">
-                                    <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-2">Volunteer Name</label>
-                                    <input required placeholder="Your Name" className="p-4 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-blue-500" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                                </div>
-                                <div className="flex flex-col">
-                                    <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-2">Select Day</label>
-                                    <select className="p-4 rounded-2xl border-2 border-slate-100 bg-white font-bold" value={formData.dayId} onChange={e => setFormData({...formData, dayId: e.target.value, item: ''})}>
-                                        {DAYS.filter(d => d.allow).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                    </select>
-                                </div>
-                                <div className="flex flex-col">
-                                    <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-2">Requested Item</label>
-                                    <select required className="p-4 rounded-2xl border-2 border-slate-100 bg-white font-bold" value={formData.item} onChange={e => setFormData({...formData, item: e.target.value})}>
-                                        <option value="">Choose item...</option>
-                                        {selectedDay?.items.map(item => {
-                                            const count = getItemCount(formData.dayId, item);
-                                            return (
-                                                <option key={item} value={item} disabled={count >= MAX_SLOTS}>
-                                                    {item} ({count}/{MAX_SLOTS} filled)
-                                                </option>
-                                            )
-                                        })}
-                                    </select>
-                                </div>
-                                <button className="md:col-span-3 py-5 bg-blue-700 text-white font-black text-xl rounded-2xl uppercase tracking-widest shadow-lg active:scale-95 transition-all mt-2">Confirm Sign-up ❤️</button>
-                                {error && <p className="text-red-500 font-bold text-center md:col-span-3 bg-red-50 p-2 rounded-xl">{error}</p>}
-                            </form>
-                        </section>
-
-                        {/* Daily Cards */}
-                        <div className="space-y-8">
-                            {DAYS.map(day => {
-                                const dayList = signups.filter(s => s.dayId === day.id);
-                                return (
-                                    <div key={day.id} className="bg-white rounded-[2.5rem] shadow-lg overflow-hidden border-2 border-slate-50">
-                                        <div className={`${day.color} p-6 flex justify-between items-center text-white`}>
-                                            <div>
-                                                <h4 className="text-3xl md:text-5xl font-black uppercase leading-none tracking-tighter">{day.name}</h4>
-                                                <p className="font-bold opacity-90 uppercase tracking-widest text-xs mt-1">{day.theme}</p>
-                                            </div>
-                                            <div className="text-4xl drop-shadow-md">{day.emoji}</div>
-                                        </div>
-                                        <div className="p-6 md:p-8 space-y-6">
-                                            {/* Summary Pills */}
-                                            <div className="flex flex-wrap gap-2">
-                                                <span className="text-[10px] font-black uppercase text-slate-400 w-full mb-1">Items Requested:</span>
-                                                {day.items.map((item, idx) => {
-                                                    const count = getItemCount(day.id, item);
-                                                    const isFull = count >= MAX_SLOTS;
-                                                    return (
-                                                        <span key={idx} className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase border-2 flex items-center gap-2 ${isFull ? 'bg-green-100 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
-                                                            {isFull && "✅"} {item} ({count}/{MAX_SLOTS})
-                                                        </span>
-                                                    )
-                                                })}
-                                            </div>
-                                            
-                                            <hr className="border-slate-100" />
-                                            
-                                            {/* Volunteer List */}
-                                            {!day.allow ? (
-                                                <div className="bg-sky-50 p-8 rounded-2xl text-center text-sky-800 font-black border-4 border-dashed border-sky-200">
-                                                    PTA IS PROVIDING LUNCH!<br/>NO VOLUNTEER SIGN-UPS NEEDED.
-                                                </div>
-                                            ) : (
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                    <span className="text-[10px] font-black uppercase text-slate-400 col-span-full">Volunteers:</span>
-                                                    {dayList.length === 0 ? (
-                                                      <p className="col-span-full text-center text-slate-300 italic font-bold py-4">No sign-ups yet. Be the first!</p>
-                                                    ) : dayList.map(s => (
-                                                        <div key={s.id} className="bg-slate-50 p-4 rounded-2xl border-2 border-white shadow-sm flex justify-between items-center group hover:bg-white hover:border-slate-100 transition-all">
-                                                            <div>
-                                                                <p className="font-black text-slate-800 leading-none">{s.name}</p>
-                                                                <p className={`text-[10px] font-black uppercase mt-1 ${day.textColor}`}>{s.item}</p>
-                                                            </div>
-                                                            {isAdmin && (
-                                                                <button 
-                                                                    onClick={() => handleDelete(s.id)} 
-                                                                    disabled={isDeleting === s.id}
-                                                                    className="bg-red-50 text-red-500 font-black text-[10px] uppercase px-3 py-2 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm"
-                                                                >
-                                                                    {isDeleting === s.id ? '...' : 'Delete'}
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {/* Footer */}
-                        <footer className="text-center pt-10 border-t border-slate-200">
-                            <div className="flex flex-col items-center gap-4">
-                                <div className="text-3xl">🍎 ✏️ 🖍️</div>
-                                <p className="text-[11px] text-slate-500 font-black uppercase tracking-widest">Design with 💛 by Scanista</p>
-                                
-                                {isAdmin ? (
-                                    <div className="flex flex-col items-center gap-2">
-                                        <div className="bg-blue-100 text-blue-700 px-4 py-1 rounded-full text-[10px] font-black uppercase border border-blue-200">Admin Mode Active</div>
-                                        <button onClick={() => setIsAdmin(false)} className="text-red-400 font-bold text-[10px] uppercase hover:underline">Logout</button>
-                                    </div>
-                                ) : (
-                                    <button onClick={() => setShowAdmin(true)} className="text-[10px] text-slate-300 font-bold uppercase hover:text-slate-500 transition-colors tracking-tighter">Admin Portal</button>
-                                )}
-                            </div>
-                        </footer>
-                    </main>
-
-                    {/* Admin Modal */}
-                    {showAdmin && (
-                        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                            <div className="bg-white rounded-[2rem] p-10 w-full max-w-sm border-4 border-blue-600 shadow-2xl animate-in fade-in zoom-in duration-200">
-                                <h3 className="text-2xl font-black uppercase mb-6 text-center text-slate-800">Admin Login</h3>
-                                <input 
-                                    autoFocus 
-                                    type="password" 
-                                    placeholder="Password" 
-                                    className="w-full p-4 border-2 border-slate-100 rounded-2xl mb-4 font-bold text-center tracking-widest text-xl outline-none focus:border-blue-500" 
-                                    value={adminInput} 
-                                    onChange={e => setAdminInput(e.target.value)} 
-                                />
-                                <button 
-                                    onClick={() => { 
-                                        if(adminInput === 'Blue'){ 
-                                            setIsAdmin(true); 
-                                            setShowAdmin(false); 
-                                            setAdminInput(''); 
-                                        } else { 
-                                            alert('Wrong Password'); 
-                                        } 
-                                    }} 
-                                    className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl uppercase shadow-lg active:scale-95 transition-all"
-                                >
-                                    Unlock Portal
-                                </button>
-                                <button onClick={() => setShowAdmin(false)} className="w-full mt-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Cancel</button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
         }
+      } catch (err) { console.error(err); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-        // Wait for Firebase then Render
-        const checkReady = setInterval(() => {
-            if (window.fbMethods) {
-                clearInterval(checkReady);
-                const root = ReactDOM.createRoot(document.getElementById('root'));
-                root.render(<App />);
-                document.getElementById('root').style.display = 'block';
-            }
-        }, 100);
-    </script>
-</body>
-</html>
+  useEffect(() => {
+    if (!user) return;
+    const q = collection(db, 'artifacts', appId, 'public', 'data', 'signups');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSignups(items.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)));
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const getItemCount = (dayId, itemName) => signups.filter(s => s.dayId === dayId && s.item === itemName).length;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!formData.name || !formData.item) {
+      setError("Please enter your name and select an item.");
+      return;
+    }
+    if (getItemCount(formData.dayId, formData.item) >= MAX_QUANTITY) {
+      setError("This item is now full! Please choose another.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'signups'), {
+        ...formData,
+        userId: user.uid,
+        timestamp: serverTimestamp()
+      });
+      setFormData({ ...formData, item: '' }); 
+    } catch (err) {
+      setError("Failed to save. Check connection.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!isAdmin) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'signups', id));
+    } catch (err) { console.error(err); }
+  };
+
+  const handleAdminAuth = (e) => {
+    e.preventDefault();
+    if (adminPass === 'Blue') {
+      setIsAdmin(true);
+      setShowAdminModal(false);
+      setAdminPass('');
+      setError('');
+    } else {
+      setError("Incorrect password.");
+    }
+  };
+
+  const currentDay = DAYS.find(d => d.id === formData.dayId);
+  const availableItems = currentDay ? currentDay.items : [];
+
+  return (
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans pb-20 selection:bg-blue-100">
+      {/* Redesigned Header: Fixed flags and straightened elements */}
+      <div className="bg-white border-b-4 border-blue-600 shadow-sm overflow-hidden relative pt-14 pb-12 px-4">
+        {/* Flags redesigned to be wider and overlapping (less like teeth) */}
+        <div className="absolute top-0 left-0 right-0 flex justify-center -space-x-2">
+          {[...Array(18)].map((_, i) => (
+            <div key={i} className={`w-14 h-12 md:w-20 md:h-16 ${i % 2 === 0 ? 'bg-blue-600' : 'bg-yellow-400'} shadow-sm`} 
+                 style={{ clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)' }}></div>
+          ))}
+          {/* Subtle "string" line for the banners */}
+          <div className="absolute top-0 left-0 right-0 h-1 bg-slate-200/50"></div>
+        </div>
+        
+        <div className="max-w-4xl mx-auto text-center mt-6">
+          <div className="flex items-center justify-center gap-6 mb-4">
+            <Apple className="w-12 h-12 md:w-16 md:h-16 text-red-500 opacity-90 drop-shadow-sm" />
+            <h1 className="text-4xl md:text-7xl font-[1000] tracking-tighter uppercase leading-none">
+              Teacher & Staff <br/>
+              <span className="text-blue-700">Appreciation</span>
+            </h1>
+            <Apple className="w-12 h-12 md:w-16 md:h-16 text-red-500 opacity-90 drop-shadow-sm" />
+          </div>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-500 mb-4 uppercase tracking-widest italic">Sign-up Portal</h2>
+          
+          {/* Straightened Date Badge */}
+          <div className="inline-block bg-yellow-400 px-8 py-3 rounded-full font-black text-2xl md:text-4xl text-blue-900 shadow-md border-2 border-blue-900 uppercase tracking-tight">
+            MAY 4-8, 2026
+          </div>
+          
+          <p className="mt-8 text-xl font-bold text-slate-600 max-w-2xl mx-auto leading-tight italic">
+             Lampton Elementary loves its teachers. Help us make this week special!
+          </p>
+        </div>
+      </div>
+
+      <main className="max-w-4xl mx-auto px-4 mt-10 space-y-8">
+        {/* Sign-up Form Section */}
+        <section className="bg-white rounded-[2rem] shadow-xl border-2 border-slate-100 p-6 md:p-10 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-5">
+            <ShoppingBag className="w-32 h-32" />
+          </div>
+          
+          <div className="flex items-center gap-3 mb-8">
+            <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-lg">
+              <Plus className="w-8 h-8" />
+            </div>
+            <h3 className="text-2xl md:text-3xl font-black text-slate-800">Count Me In!</h3>
+          </div>
+          
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Volunteer Name</label>
+              <div className="relative group">
+                <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
+                <input
+                  required
+                  type="text"
+                  placeholder="Your Name"
+                  className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-lg"
+                  value={formData.name}
+                  onChange={(e) => setFormData({...formData, name: e.target.value})}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Which Day?</label>
+              <select
+                className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all bg-white font-bold text-lg appearance-none cursor-pointer"
+                value={formData.dayId}
+                onChange={(e) => setFormData({...formData, dayId: e.target.value, item: ''})}
+              >
+                {DAYS.filter(day => day.allowSignup).map(day => (
+                  <option key={day.id} value={day.id}>{day.name} ({day.theme})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Item to Bring</label>
+              <div className="relative group">
+                <ShoppingBag className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+                <select
+                  required
+                  className="w-full pl-12 pr-10 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all bg-white font-bold text-lg appearance-none cursor-pointer"
+                  value={formData.item}
+                  onChange={(e) => setFormData({...formData, item: e.target.value})}
+                >
+                  <option value="" disabled>Choose item...</option>
+                  {availableItems.map(item => {
+                    const count = getItemCount(formData.dayId, item);
+                    const isFull = count >= MAX_QUANTITY;
+                    return (
+                      <option key={item} value={item} disabled={isFull}>
+                        {item} {isFull ? '— (FULL)' : `(${count}/${MAX_QUANTITY} spots filled)`}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+
+            <div className="md:col-span-3 pt-4">
+              {error && !showAdminModal && (
+                <div className="bg-red-50 border-2 border-red-100 text-red-600 p-4 rounded-2xl mb-4 flex items-center gap-3 animate-pulse font-bold">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+              <button
+                disabled={isSubmitting}
+                className="w-full py-5 bg-blue-700 hover:bg-blue-800 text-white font-black text-xl rounded-2xl shadow-lg transform active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 uppercase tracking-widest"
+              >
+                {isSubmitting ? "Processing..." : "Add Me to the List!"}
+                <Heart className="w-6 h-6" fill="currentColor" />
+              </button>
+              <p className="text-center text-[10px] text-slate-400 mt-4 flex items-center justify-center gap-2 font-black uppercase tracking-[0.2em]">
+                <Lock className="w-3 h-3" /> Secure sign-up by Scanista
+              </p>
+            </div>
+          </form>
+        </section>
+
+        {/* Themed Day Cards */}
+        <div className="grid grid-cols-1 gap-10">
+          {DAYS.map((day) => {
+            const daySignups = signups.filter(s => s.dayId === day.id);
+            return (
+              <div key={day.id} className={`rounded-[2.5rem] bg-white shadow-xl overflow-hidden border-2 border-slate-50 group transition-all duration-300`}>
+                {/* Day Header Bar */}
+                <div className={`${day.color} p-8 flex flex-col md:flex-row md:items-center justify-between gap-6`}>
+                  <div className="flex items-center gap-6">
+                    <div className="bg-white/20 p-4 rounded-2xl backdrop-blur-md shadow-inner text-white ring-2 ring-white/30">
+                      {day.icon}
+                    </div>
+                    <div className="text-white">
+                      <h4 className="text-4xl md:text-6xl font-[1000] uppercase tracking-tighter leading-none">{day.name}</h4>
+                      <p className="font-bold text-white/90 text-lg md:text-xl uppercase tracking-widest mt-1">{day.theme}</p>
+                    </div>
+                  </div>
+                  
+                  {day.allowSignup && (
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      {day.items.map((item) => {
+                        const count = getItemCount(day.id, item);
+                        const isFull = count >= MAX_QUANTITY;
+                        return (
+                          <div key={item} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs md:text-sm font-black transition-all ${isFull ? 'bg-white text-green-600 shadow-md scale-105' : 'bg-black/10 text-white border border-white/10'}`}>
+                            {isFull ? <CheckCircle2 className="w-4 h-4" /> : <div className="w-2 h-2 rounded-full bg-white/50" />}
+                            {item} ({count}/{MAX_QUANTITY})
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-8 md:p-12">
+                  <h5 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 mb-8 flex items-center gap-3">
+                    {day.allowSignup ? (
+                      <><Heart className="w-4 h-4 text-red-400" /> Volunteers signed up ({daySignups.length})</>
+                    ) : (
+                      <><Info className="w-4 h-4 text-blue-400" /> Special Details</>
+                    )}
+                  </h5>
+                  
+                  {!day.allowSignup ? (
+                    <div className="bg-sky-50 p-10 rounded-3xl border-4 border-dashed border-sky-200 text-sky-800 text-center">
+                      <div className="text-6xl mb-4">🌮</div>
+                      <p className="text-2xl md:text-3xl font-black mb-2 uppercase tracking-tight">PTA Provided Lunch!</p>
+                      <p className="font-bold text-lg opacity-70">The PTA is catering lunch for everyone today. No volunteer items needed for Wednesday!</p>
+                    </div>
+                  ) : daySignups.length === 0 ? (
+                    <div className="py-12 text-center bg-slate-50/50 rounded-3xl border-2 border-dashed border-slate-200">
+                       <p className="text-slate-400 font-bold italic">No sign-ups yet. Be the first to volunteer!</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {daySignups.map((signup) => (
+                        <div key={signup.id} className="flex items-center justify-between bg-slate-50 p-6 rounded-2xl border-2 border-white shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex flex-col">
+                            <span className="text-xl font-black text-slate-800 leading-tight tracking-tight">{signup.name}</span>
+                            <span className={`text-[11px] font-black uppercase tracking-widest mt-1 ${day.textColor}`}>{signup.item}</span>
+                          </div>
+                          {isAdmin && (
+                            <button 
+                              onClick={() => handleDelete(signup.id)}
+                              className="p-3 text-red-500 hover:bg-red-50 rounded-xl transition-all active:scale-90"
+                              title="Delete entry"
+                            >
+                              <Trash2 className="w-6 h-6" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer Area */}
+        <footer className="text-center pt-20 pb-10 space-y-8">
+          <div className="flex justify-center gap-10">
+             <span className="text-6xl cursor-default">🍎</span>
+             <span className="text-6xl cursor-default">✏️</span>
+             <span className="text-6xl cursor-default">🖍️</span>
+          </div>
+          <div className="space-y-2">
+            <p className="text-slate-500 font-black uppercase tracking-[0.2em] text-sm">
+              Supporting Lampton Elementary
+            </p>
+            <p className="text-slate-400 font-medium italic">
+              A community effort to celebrate our amazing staff.
+            </p>
+          </div>
+          
+          <div className="pt-10 flex flex-col items-center gap-6">
+            {!isAdmin ? (
+              <button 
+                onClick={() => { setError(''); setShowAdminModal(true); }}
+                className="px-8 py-3 bg-slate-100 text-slate-400 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 hover:text-slate-600 transition-all flex items-center gap-3 border border-slate-200"
+              >
+                <Lock className="w-3 h-3" /> Admin Login
+              </button>
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                <div className="bg-green-100 text-green-700 px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border-2 border-green-200 flex items-center gap-2 shadow-sm">
+                  <Unlock className="w-3 h-3" /> Admin Dashboard Active
+                </div>
+                <button onClick={() => setIsAdmin(false)} className="text-[10px] font-black text-red-400 hover:text-red-600 uppercase tracking-widest transition-colors">Log Out</button>
+              </div>
+            )}
+            
+            <div className="mt-8 flex flex-col items-center gap-2">
+              <p className="text-[11px] text-slate-400 font-black uppercase tracking-[0.3em]">
+                Design with <span className="text-yellow-500 text-sm">💛</span> by Scanista
+              </p>
+              <p className="text-[10px] text-slate-300 font-medium">© 2026 Lampton Elementary Staff Appreciation Week</p>
+            </div>
+          </div>
+        </footer>
+      </main>
+
+      {/* Admin Auth Modal */}
+      {showAdminModal && (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden border-4 border-blue-600 animate-in fade-in zoom-in duration-300">
+            <div className="p-12">
+              <div className="flex justify-between items-center mb-10">
+                <div className="flex items-center gap-3">
+                  <div className="bg-blue-600 p-2 rounded-xl">
+                    <Lock className="w-6 h-6 text-white" />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">
+                    Admin Access
+                  </h3>
+                </div>
+                <button onClick={() => setShowAdminModal(false)} className="text-slate-300 hover:text-slate-900 text-2xl font-black transition-colors">✕</button>
+              </div>
+              
+              <form onSubmit={handleAdminAuth} className="space-y-8">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Master Password</label>
+                  <input
+                    autoFocus
+                    type="password"
+                    placeholder="••••••••"
+                    className="w-full px-6 py-5 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-black text-2xl tracking-[0.4em] text-center transition-all shadow-inner bg-slate-50"
+                    value={adminPass}
+                    onChange={(e) => setAdminPass(e.target.value)}
+                  />
+                </div>
+                {error && <div className="text-red-500 text-xs font-black bg-red-50 p-4 rounded-2xl border border-red-100 text-center animate-shake">{error}</div>}
+                <button className="w-full py-5 bg-blue-600 text-white font-black text-xl rounded-2xl hover:bg-blue-700 shadow-xl transform active:scale-95 transition-all uppercase tracking-widest">
+                  Unlock Portal
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 ```
