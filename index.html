@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lampton Teacher Appreciation Sign-up</title>
     
-    <!-- UI Resources -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -14,46 +13,42 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
         body { font-family: 'Inter', sans-serif; overflow-x: hidden; background-color: #f8fafc; color: #1e293b; }
-        
-        /* Festive Bunting */
         .bunting-flag { clip-path: polygon(0% 0%, 100% 0%, 50% 100%); }
-        
-        #root:empty { display: none; }
         .btn-press:active { transform: scale(0.98); }
-        .emoji-span { display: inline-block; flex-shrink: 0; min-width: 1.2em; }
-        
-        /* Smooth Fade In */
-        .fade-in { animation: fadeIn 0.2s ease-out; }
+        .shimmer { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        .fade-in { animation: fadeIn 0.3s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <!-- Firebase Implementation -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp, query } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyD_nLssSVEfRL-x1KM1574KHBIcnhdS4Ck",
-            authDomain: "lampton-appreciation.firebaseapp.com",
-            projectId: "lampton-appreciation",
-            storageBucket: "lampton-appreciation.firebasestorage.app",
-            messagingSenderId: "721268982987",
-            appId: "1:721268982987:web:5d8b978e6f3dc69e7b91ce",
-            measurementId: "G-HX3QW1SMSF"
-        };
+        // Global environment variables
+        const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
+        const appId = typeof window.__app_id !== 'undefined' ? window.__app_id : 'lampton-appreciation';
+        const authToken = window.__initial_auth_token;
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        window.portalFirebase = { auth, db, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp, signInAnonymously, onAuthStateChanged };
+        // Expose to React with correct Path logic
+        window.portalFirebase = { 
+            auth, db, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp, 
+            signInAnonymously, signInWithCustomToken, onAuthStateChanged, query,
+            appId,
+            // Rule 1: Strict Path helper
+            getCollection: (name) => collection(db, 'artifacts', appId, 'public', 'data', name),
+            getDocRef: (name, id) => doc(db, 'artifacts', appId, 'public', 'data', name, id)
+        };
     </script>
 
-    <!-- React Application -->
     <script type="text/babel">
         const { useState, useEffect } = React;
 
@@ -69,173 +64,186 @@
         function App() {
             const [user, setUser] = useState(null);
             const [signups, setSignups] = useState([]);
+            const [loading, setLoading] = useState(true);
             const [form, setForm] = useState({ name: '', item: '', dayId: 'monday' });
             const [isAdmin, setIsAdmin] = useState(false);
-            const [adminInput, setAdminInput] = useState('');
             const [showAdmin, setShowAdmin] = useState(false);
+            const [adminInput, setAdminInput] = useState('');
             const [adminError, setAdminError] = useState(false);
             const [status, setStatus] = useState('');
             const [isSubmitting, setIsSubmitting] = useState(false);
 
             useEffect(() => {
-                const interval = setInterval(() => {
-                    if (window.portalFirebase) {
-                        clearInterval(interval);
-                        const fb = window.portalFirebase;
-                        fb.signInAnonymously(fb.auth).catch(console.error);
-                        fb.onAuthStateChanged(fb.auth, setUser);
-                    }
-                }, 100);
+                const init = async () => {
+                    const fb = window.portalFirebase;
+                    if (!fb) return setTimeout(init, 100);
+
+                    // Rule 3: Auth Before Queries
+                    try {
+                        if (window.__initial_auth_token) {
+                            await fb.signInWithCustomToken(fb.auth, window.__initial_auth_token);
+                        } else {
+                            await fb.signInAnonymously(fb.auth);
+                        }
+                    } catch (e) { console.error("Auth failed", e); }
+
+                    fb.onAuthStateChanged(fb.auth, setUser);
+                };
+                init();
             }, []);
 
             useEffect(() => {
                 if (!user || !window.portalFirebase) return;
                 const fb = window.portalFirebase;
-                return fb.onSnapshot(fb.collection(fb.db, 'signups'), (snapshot) => {
-                    setSignups(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)));
-                }, (err) => console.error("Database Connection Issue:", err));
+                
+                // Rule 1 & 2: Simple query on strict path
+                const unsubscribe = fb.onSnapshot(fb.getCollection('signups'), 
+                    (snap) => {
+                        setSignups(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        setLoading(false);
+                    }, 
+                    (err) => {
+                        console.error("Firestore Error:", err);
+                        setLoading(false);
+                    }
+                );
+                return () => unsubscribe();
             }, [user]);
 
             const handleSignup = async (e) => {
                 e.preventDefault();
-                if (!form.name || !form.item) return;
+                if (!form.name || !form.item || !user) return;
                 setIsSubmitting(true);
                 try {
                     const fb = window.portalFirebase;
-                    await fb.addDoc(fb.collection(fb.db, 'signups'), { ...form, timestamp: fb.serverTimestamp() });
+                    await fb.addDoc(fb.getCollection('signups'), { 
+                        ...form, 
+                        userId: user.uid,
+                        timestamp: fb.serverTimestamp() 
+                    });
                     setForm({...form, item: ''});
-                    setStatus("✅ Successfully Saved! ❤️");
+                    setStatus("✅ Sign-up Confirmed!");
                     setTimeout(() => setStatus(''), 4000);
-                } catch (err) { setStatus("❌ Save failed. Ensure Rules are Published."); }
-                finally { setIsSubmitting(false); }
+                } catch (err) { 
+                    setStatus("❌ Failed to save. Check Rules."); 
+                } finally { 
+                    setIsSubmitting(false); 
+                }
             };
 
             const eraseSignup = async (id) => {
                 if (!isAdmin) return;
-                const fb = window.portalFirebase;
-                await fb.deleteDoc(fb.doc(fb.db, 'signups', id));
+                await window.portalFirebase.deleteDoc(window.portalFirebase.getDocRef('signups', id));
             };
 
             const getCount = (dayId, item) => signups.filter(s => s.dayId === dayId && s.item === item).length;
             const currentDay = DAYS.find(d => d.id === form.dayId);
 
-            const handleAdminLogin = () => {
-                if (adminInput === 'Blue') {
-                    setIsAdmin(true);
-                    setShowAdmin(false);
-                    setAdminInput('');
-                    setAdminError(false);
-                } else {
-                    setAdminError(true);
-                    setAdminInput('');
-                }
-            };
-
             return (
                 <div className="pb-32 antialiased">
                     <header className="bg-white border-b-4 border-blue-600 relative pt-16 pb-12 px-4 text-center shadow-lg">
-                        <div className="absolute top-0 left-0 right-0 flex justify-center gap-3 overflow-hidden h-14">
-                            {[...Array(12)].map((_, i) => <div key={i} className={`flex-shrink-0 w-24 h-14 md:w-36 md:h-18 ${i%2===0?'bg-blue-600':'bg-yellow-400'} bunting-flag shadow-sm`}></div>)}
+                        <div className="absolute top-0 left-0 right-0 flex justify-center -space-x-1 overflow-hidden h-14">
+                            {[...Array(16)].map((_, i) => (
+                                <div key={i} className={`w-12 h-14 md:w-16 md:h-18 ${i%2===0?'bg-blue-600':'bg-yellow-400'} bunting-flag shadow-sm`}></div>
+                            ))}
                         </div>
-                        <div className="max-w-4xl mx-auto mt-6 relative px-4">
-                            <div className="flex items-center justify-center gap-4 md:gap-12 mb-6">
-                                <span className="text-5xl md:text-8xl emoji-span">🍎</span>
-                                <h1 className="text-4xl md:text-8xl font-[900] tracking-tighter uppercase leading-[0.9] text-slate-800">
+                        <div className="max-w-4xl mx-auto mt-6">
+                            <div className="flex items-center justify-center gap-4 mb-4">
+                                <span className="text-5xl md:text-7xl">🍎</span>
+                                <h1 className="text-4xl md:text-7xl font-[900] tracking-tighter uppercase leading-[0.9] text-slate-800">
                                     Teacher & Staff <br/><span className="text-blue-700">Appreciation</span>
                                 </h1>
-                                <span className="text-5xl md:text-8xl emoji-span">🍎</span>
+                                <span className="text-5xl md:text-7xl">🍎</span>
                             </div>
-                            <div className="inline-block bg-yellow-400 px-12 py-4 rounded-full font-black text-2xl md:text-5xl text-blue-900 border-4 border-blue-900 shadow-xl uppercase tracking-tighter">MAY 4-8, 2026</div>
+                            <div className="inline-block bg-yellow-400 px-10 py-3 rounded-full font-black text-2xl md:text-4xl text-blue-900 border-2 border-blue-900 shadow-md uppercase tracking-tight">MAY 4-8, 2026</div>
                         </div>
                     </header>
 
                     <main className="max-w-4xl mx-auto px-4 mt-12 space-y-12">
-                        <section className="bg-white rounded-[3rem] shadow-2xl p-8 md:p-12 border-2 border-slate-100">
-                            <h3 className="text-2xl md:text-3xl font-black mb-10 text-slate-800 flex items-center gap-3">
-                                <span className="bg-blue-600 text-white p-2 rounded-2xl shadow-md text-xl">➕</span> Add My Item
+                        <section className="bg-white rounded-[2.5rem] shadow-xl p-8 md:p-12 border-2 border-slate-100 fade-in">
+                            <h3 className="text-2xl font-black mb-8 text-slate-800 flex items-center gap-3">
+                                <span className="bg-blue-600 text-white p-2 rounded-xl text-lg">➕</span> Add My Item
                             </h3>
-                            <form onSubmit={handleSignup} className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                                <div className="flex flex-col gap-2">
-                                    <label className="text-xs font-black uppercase text-slate-400 ml-3 tracking-widest">Volunteer Name</label>
-                                    <input required placeholder="Jane" className="p-5 rounded-[1.5rem] border-2 border-slate-100 font-bold bg-slate-50 text-lg shadow-inner outline-none focus:bg-white focus:border-blue-500 transition-all" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+                            <form onSubmit={handleSignup} className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Name</label>
+                                    <input required placeholder="Your Name" className="w-full p-4 rounded-2xl border-2 border-slate-100 font-bold bg-slate-50 outline-none focus:bg-white focus:border-blue-500 transition-all" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
                                 </div>
-                                <div className="flex flex-col gap-2">
-                                    <label className="text-xs font-black uppercase text-slate-400 ml-3 tracking-widest">Select Day</label>
-                                    <select className="p-5 rounded-[1.5rem] border-2 border-slate-100 bg-white font-bold cursor-pointer text-lg appearance-none shadow-sm" value={form.dayId} onChange={e => setForm({...form, dayId: e.target.value, item: ''})}>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Day</label>
+                                    <select className="w-full p-4 rounded-2xl border-2 border-slate-100 bg-white font-bold cursor-pointer" value={form.dayId} onChange={e => setForm({...form, dayId: e.target.value, item: ''})}>
                                         {DAYS.filter(d => d.allow).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                                     </select>
                                 </div>
-                                <div className="flex flex-col gap-2">
-                                    <label className="text-xs font-black uppercase text-slate-400 ml-3 tracking-widest">Choose Item</label>
-                                    <select required className="p-5 rounded-[1.5rem] border-2 border-slate-100 bg-white font-bold cursor-pointer text-lg appearance-none shadow-sm" value={form.item} onChange={e => setForm({...form, item: e.target.value})}>
-                                        <option value="">Select an item...</option>
-                                        {currentDay?.items.map(item => (
-                                            <option key={item} value={item} disabled={getCount(form.dayId, item) >= MAX_SLOTS}>
-                                                {item} ({getCount(form.dayId, item)}/{MAX_SLOTS} filled)
-                                            </option>
-                                        ))}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Item</label>
+                                    <select required className="w-full p-4 rounded-2xl border-2 border-slate-100 bg-white font-bold cursor-pointer" value={form.item} onChange={e => setForm({...form, item: e.target.value})}>
+                                        <option value="">Select item...</option>
+                                        {currentDay?.items.map(i => <option key={i} value={i} disabled={getCount(form.dayId, i) >= MAX_SLOTS}>{i} ({getCount(form.dayId, i)}/{MAX_SLOTS})</option>)}
                                     </select>
                                 </div>
-                                <button disabled={isSubmitting} className="md:col-span-3 py-6 bg-blue-700 text-white font-black text-2xl rounded-[1.5rem] uppercase shadow-xl btn-press transform transition-all active:scale-95 disabled:opacity-50">
-                                    {isSubmitting ? "Sending..." : "Confirm Sign-up ❤️"}
+                                <button disabled={isSubmitting} className="md:col-span-3 py-5 bg-blue-700 text-white font-black text-xl rounded-2xl uppercase tracking-widest shadow-lg btn-press disabled:opacity-50 transition-all hover:bg-blue-800">
+                                    {isSubmitting ? "Syncing..." : "Confirm Sign-up ❤️"}
                                 </button>
-                                {status && <div className={`md:col-span-3 text-center font-black p-4 rounded-2xl ${status.includes('✅') ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'}`}>{status}</div>}
+                                {status && <div className="md:col-span-3 text-center font-black p-3 rounded-xl bg-blue-50 text-blue-700 text-sm">{status}</div>}
                             </form>
                         </section>
 
-                        <div className="space-y-12">
+                        <div className="space-y-10">
                             {DAYS.map(day => {
                                 const list = signups.filter(s => s.dayId === day.id);
                                 return (
-                                    <div key={day.id} className="bg-white rounded-[3.5rem] shadow-xl overflow-hidden border-2 border-slate-50 transition-transform hover:scale-[1.01] duration-300">
-                                        <div className={`${day.color} p-8 md:p-12 flex justify-between items-center text-white`}>
+                                    <div key={day.id} className="bg-white rounded-[3rem] shadow-lg overflow-hidden border border-slate-100 fade-in">
+                                        <div className={`${day.color} p-8 flex justify-between items-center text-white`}>
                                             <div>
-                                                <h4 className="text-4xl md:text-8xl font-black uppercase leading-none tracking-tighter">{day.name}</h4>
-                                                <p className="font-bold opacity-90 uppercase tracking-widest text-xs mt-4">{day.theme}</p>
+                                                <h4 className="text-4xl md:text-6xl font-black uppercase leading-none tracking-tighter">{day.name}</h4>
+                                                <p className="font-bold opacity-80 uppercase tracking-widest text-[10px] mt-2">{day.theme}</p>
                                             </div>
-                                            <div className="text-5xl md:text-8xl drop-shadow-2xl">{day.emoji}</div>
+                                            <div className="text-5xl md:text-7xl drop-shadow-lg">{day.emoji}</div>
                                         </div>
                                         
-                                        <div className="p-8 md:p-14 space-y-12">
+                                        <div className="p-8 md:p-12 space-y-8">
                                             <div className="space-y-4">
-                                                <h5 className="text-[10px] font-black uppercase text-slate-300 tracking-[0.2em] mb-4 underline">Items Needed:</h5>
-                                                <div className="flex flex-wrap gap-4">
-                                                    {day.items.map(item => {
+                                                <h5 className="text-[10px] font-black uppercase text-slate-300 tracking-widest mb-4">Needed Items:</h5>
+                                                <div className="flex flex-wrap gap-3">
+                                                    {loading ? [...Array(3)].map((_,i) => <div key={i} className="w-24 h-8 rounded-lg shimmer"></div>) : day.items.map(item => {
                                                         const count = getCount(day.id, item);
                                                         const isFull = count >= MAX_SLOTS;
                                                         return (
-                                                            <div key={item} className={`px-6 py-4 rounded-3xl border-2 flex items-center gap-4 transition-all ${isFull ? 'bg-green-100 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-600 shadow-sm'}`}>
-                                                                <span className="font-black text-xs uppercase tracking-tight">{item}</span>
-                                                                <span className={`text-[10px] font-black px-3 py-1 rounded-full ${isFull ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                                                                    {isFull ? "FULL ✅" : `${count}/${MAX_SLOTS}`}
+                                                            <div key={item} className={`px-4 py-2 rounded-xl border flex items-center gap-3 ${isFull ? 'bg-green-50 border-green-100 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+                                                                <span className="font-black text-[10px] uppercase">{item}</span>
+                                                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isFull ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                                                                    {isFull ? "FULL" : `${count}/${MAX_SLOTS}`}
                                                                 </span>
                                                             </div>
                                                         );
                                                     })}
                                                 </div>
                                             </div>
-
-                                            <hr className="border-slate-100" />
-
+                                            <hr className="border-slate-50" />
                                             <div className="space-y-4">
-                                                <h5 className="text-[10px] font-black uppercase text-slate-300 tracking-[0.2em] mb-4 underline">Our Volunteers:</h5>
+                                                <h5 className="text-[10px] font-black uppercase text-slate-300 tracking-widest mb-4">Volunteers:</h5>
                                                 {!day.allow ? (
-                                                    <div className="bg-sky-50 border-4 border-dashed border-sky-200 p-12 rounded-[2.5rem] text-center text-sky-900 font-black text-2xl md:text-4xl uppercase tracking-tight">PTA Provided Lunch! 🌮</div>
+                                                    <div className="bg-sky-50 p-10 rounded-2xl text-center text-sky-900 font-black text-2xl uppercase italic">PTA Provided Lunch! 🌮</div>
+                                                ) : loading ? (
+                                                    <div className="h-20 w-full rounded-2xl shimmer"></div>
                                                 ) : (
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                                         {list.length === 0 ? (
-                                                            <p className="col-span-full text-center text-slate-300 italic font-bold py-10 text-2xl underline decoration-dotted decoration-sky-200 tracking-tight">No sign-ups yet.</p>
-                                                        ) : list.map(s => (
-                                                            <div key={s.id} className="bg-slate-50 p-6 rounded-[2rem] border-2 border-white shadow-sm flex justify-between items-center group hover:bg-white transition-all">
-                                                                <div className="flex flex-col">
-                                                                    <p className="font-black text-slate-800 text-2xl leading-none">{s.name}</p>
-                                                                    <p className={`text-[11px] font-black uppercase mt-2 ${day.textColor}`}>{s.item}</p>
+                                                            <p className="col-span-full text-center text-slate-300 italic font-bold py-6 text-lg tracking-tight">No sign-ups yet.</p>
+                                                        ) : (
+                                                            list.map(s => (
+                                                                <div key={s.id} className="bg-slate-50 p-5 rounded-2xl border-2 border-white flex justify-between items-center group hover:bg-white transition-all shadow-sm">
+                                                                    <div>
+                                                                        <p className="font-black text-slate-800 text-xl leading-none tracking-tight">{s.name}</p>
+                                                                        <p className={`text-[10px] font-black uppercase mt-1 ${day.textColor}`}>{s.item}</p>
+                                                                    </div>
+                                                                    {isAdmin && (
+                                                                        <button onClick={() => eraseSignup(s.id)} className="bg-red-50 text-red-500 font-black text-[9px] uppercase px-3 py-1.5 rounded-lg border border-red-100 hover:bg-red-500 hover:text-white transition-all">Erase</button>
+                                                                    )}
                                                                 </div>
-                                                                {isAdmin && (
-                                                                    <button onClick={() => eraseSignup(s.id)} className="bg-red-50 text-red-500 font-black text-[10px] uppercase px-4 py-2 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-md border border-red-100">Erase</button>
-                                                                )}
-                                                            </div>
-                                                        ))}
+                                                            ))
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
@@ -245,57 +253,42 @@
                             })}
                         </div>
 
-                        {/* Redesigned More Visible Footer */}
-                        <footer className="text-center pt-24 border-t-2 border-slate-200 flex flex-col items-center gap-10 pb-20">
-                            {/* More opaque emojis */}
-                            <div className="flex justify-center gap-10 md:gap-20 text-7xl drop-shadow-xl opacity-90">
-                                <span>🍎</span>
-                                <span>✏️</span>
-                                <span>🖍️</span>
+                        <footer className="text-center pt-20 flex flex-col items-center gap-10 pb-16">
+                            <div className="flex gap-10 text-6xl drop-shadow-xl grayscale opacity-30"><span>🍎</span><span>✏️</span><span>🖍️</span></div>
+                            <div className="space-y-2">
+                                <p className="text-sm font-black uppercase text-slate-700 tracking-[0.4em]">Supporting Lampton Elementary</p>
+                                <p className="text-slate-400 text-xs font-bold italic tracking-wide">Together we celebrate our amazing staff.</p>
                             </div>
                             
-                            <div className="space-y-4">
-                                <p className="text-base font-[900] uppercase text-slate-700 tracking-[0.5em]">Supporting Lampton Elementary</p>
-                                <p className="text-slate-500 font-bold italic">A community celebration for our hard-working staff.</p>
-                            </div>
-                            
-                            {/* Standout Admin Section */}
-                            <div className="w-full max-w-xs pt-4">
+                            <div className="w-full max-w-xs">
                                 {isAdmin ? (
-                                    <div className="flex flex-col items-center gap-4">
-                                        <div className="bg-green-600 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg flex items-center gap-2">
-                                            <span className="text-lg">🔓</span> Admin Mode Active
-                                        </div>
-                                        <button onClick={() => setIsAdmin(false)} className="text-[10px] font-black text-red-500 hover:text-red-700 uppercase tracking-widest underline decoration-2 underline-offset-4 transition-colors">Log Out of Dashboard</button>
+                                    <div className="flex flex-col items-center gap-3">
+                                        <div className="bg-green-600 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md">🔓 Admin Active</div>
+                                        <button onClick={() => setIsAdmin(false)} className="text-[10px] font-black text-red-500 uppercase underline transition-colors">Log Out</button>
                                     </div>
                                 ) : (
-                                    <button 
-                                        onClick={() => setShowAdmin(true)} 
-                                        className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-black py-4 px-8 rounded-2xl text-xs uppercase tracking-widest transition-all shadow-sm flex items-center justify-center gap-3"
-                                    >
-                                        <span>🔒</span> Admin Portal Login
+                                    <button onClick={() => setShowAdmin(true)} className="w-full bg-slate-200 hover:bg-slate-300 text-slate-600 font-black py-4 px-8 rounded-2xl text-[10px] uppercase tracking-widest transition-all shadow-sm">
+                                        Admin Portal Login
                                     </button>
                                 )}
                             </div>
                             
-                            <div className="pt-10 flex flex-col items-center gap-2 opacity-60">
-                                <p className="text-[11px] text-slate-500 font-black uppercase tracking-[0.3em]">
-                                    Developed by Scanista
-                                </p>
-                                <p className="text-[10px] text-slate-400 font-medium">© 2026 Staff Appreciation Week</p>
+                            <div className="pt-8 flex flex-col items-center gap-1">
+                                <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.3em]">Developed by Scanista 💛</p>
+                                <p className="text-[9px] text-slate-300 font-medium">© 2026 Lampton Staff Appreciation</p>
                             </div>
                         </footer>
                     </main>
 
                     {showAdmin && (
-                        <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 flex items-center justify-center p-4">
-                            <div className="bg-white rounded-[3rem] p-10 md:p-14 w-full max-w-md border-4 border-blue-600 shadow-2xl fade-in text-center">
-                                <h3 className="text-3xl font-black uppercase mb-10 text-slate-800 tracking-tighter">Admin Login</h3>
-                                <input autoFocus type="password" placeholder="••••" className={`w-full p-6 border-2 rounded-2xl mb-2 font-bold text-center tracking-[0.5em] text-4xl outline-none focus:bg-white shadow-inner bg-slate-50 ${adminError ? 'border-red-500' : 'border-slate-100 focus:border-blue-500'}`} value={adminInput} onChange={e => { setAdminInput(e.target.value); setAdminError(false); }} onKeyPress={e => e.key === 'Enter' && handleAdminLogin()} />
-                                {adminError && <p className="text-red-500 text-xs font-black uppercase mb-6 tracking-widest">Incorrect Password</p>}
-                                <div className="flex flex-col gap-4 mt-6">
-                                    <button onClick={handleAdminLogin} className="w-full py-6 bg-blue-600 text-white font-black text-2xl rounded-2xl uppercase shadow-xl transform active:scale-95 transition-all">Unlock Dashboard</button>
-                                    <button onClick={() => { setShowAdmin(false); setAdminError(false); setAdminInput(''); }} className="w-full py-2 text-xs font-black text-slate-400 uppercase tracking-widest">Cancel</button>
+                        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-md border-4 border-blue-600 shadow-2xl fade-in text-center">
+                                <h3 className="text-2xl font-black uppercase mb-8 text-slate-800 tracking-tighter">Admin Access</h3>
+                                <input autoFocus type="password" placeholder="••••" className={`w-full p-5 border-2 rounded-xl mb-2 font-bold text-center tracking-[0.5em] text-3xl outline-none focus:bg-white shadow-inner bg-slate-50 ${adminError ? 'border-red-500' : 'border-slate-100 focus:border-blue-500'}`} value={adminInput} onChange={e => { setAdminInput(e.target.value); setAdminError(false); }} onKeyPress={e => e.key === 'Enter' && (adminInput === 'Blue' ? (setIsAdmin(true), setShowAdmin(false)) : setAdminError(true))} />
+                                {adminError && <p className="text-red-500 text-[10px] font-black uppercase mb-6 tracking-widest">Wrong Password</p>}
+                                <div className="flex flex-col gap-4 mt-4">
+                                    <button onClick={() => { if(adminInput === 'Blue'){ setIsAdmin(true); setShowAdmin(false); setAdminInput(''); } else { setAdminError(true); } }} className="w-full py-5 bg-blue-600 text-white font-black text-xl rounded-xl uppercase shadow-lg transform active:scale-95 transition-all">Unlock</button>
+                                    <button onClick={() => { setShowAdmin(false); setAdminError(false); setAdminInput(''); }} className="w-full py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Cancel</button>
                                 </div>
                             </div>
                         </div>
